@@ -1,6 +1,5 @@
 package net.kush.nimo;
 
-import it.sauronsoftware.cron4j.Scheduler;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -15,7 +14,11 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
 import javax.sql.DataSource;
+
+import it.sauronsoftware.cron4j.InvalidPatternException;
+import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for database based properties configuration
@@ -55,7 +58,7 @@ public class SQLDatabasePropertyManager implements Reloadable {
     public SQLDatabasePropertyManager(String tableName, String keyColumnName, String valueColumnName, DataSource ds)
             throws PropertyException {
         this(tableName, keyColumnName, valueColumnName, ds, Reloadable.RELOAD_STRATEGY.NONE,
-                Reloadable.UPDATE_STRATEGY.INTERNAL, 1);
+                Reloadable.UPDATE_STRATEGY.INTERNAL, DEFAULT_RELOAD_INTERVAL);
     }
 
     /**
@@ -78,13 +81,12 @@ public class SQLDatabasePropertyManager implements Reloadable {
      *
      * @param updateStrategy  The update strategy to use in getting updates from
      *                        from database
-     * @param interval        An integer representing interval in minutes between
-     *                        properties reloads. Value must be 1 and above.
-     * @throws PropertyException If selectQuery is null or invalid sql query or if
-     *                           interval is less than one(1)
+     * @param cronExpression  A valid cron expression that is used for reloading configuration if
+     *                        reload strategy is Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @throws PropertyException If selectQuery is null or invalid sql query
      */
     public SQLDatabasePropertyManager(String tableName, String keyColumnName, String valueColumnName, DataSource ds,
-            Reloadable.RELOAD_STRATEGY reloadStrategy, Reloadable.UPDATE_STRATEGY updateStrategy, int interval)
+            Reloadable.RELOAD_STRATEGY reloadStrategy, Reloadable.UPDATE_STRATEGY updateStrategy, String cronExpression)
             throws PropertyException {
         this.ds = ds;
         this.tableName = tableName;
@@ -117,20 +119,10 @@ public class SQLDatabasePropertyManager implements Reloadable {
             logger.log(Level.WARNING, "'Reloadable.RELOAD_STRATEGY.STORE_CHANGED' may lead to poor performance");
         }
 
-        Connection conn = null;
-        try {
-            conn = ds.getConnection();
-        } catch (SQLException sqle) {
-            logger.log(Level.SEVERE, "Cannot connection to database", sqle);
-            throw new PropertyException(sqle);
-        } finally {
-            try {
-                if (conn != null) {
-                    conn.close();
-                }
-            } catch (SQLException sqle) {
-                logger.log(Level.WARNING, "Cannot close connection to database");
-            }
+        try (Connection conn = ds.getConnection()) {
+
+        } catch (Exception sqle) {
+            throw new PropertyException("Cannot connection to database", sqle);
         }
 
         try {
@@ -141,17 +133,14 @@ public class SQLDatabasePropertyManager implements Reloadable {
 
         if (RELOAD_STRATEGY.INTERVAL.equals(this.reloadStrategy)) {
 
-            if (interval < 1) {
-                throw new PropertyException(String.format("interval must be a number greater than '%s'", 0));
-            }
-
-            StringBuilder schedulePattern = new StringBuilder();
-            schedulePattern.append("*/").append(interval).append(" * * * *");
-
             scheduler = Util.getOrCreateScheduler();
             SQLDatabasePropertyManager.ReadTask task = new SQLDatabasePropertyManager.ReadTask();
 
-            scheduleId = scheduler.schedule(schedulePattern.toString(), task);
+            try {
+                scheduleId = scheduler.schedule(cronExpression, task);
+            } catch (InvalidPatternException ipe) {
+                throw new PropertyException(ipe);
+            }
 
         }
 
@@ -166,8 +155,16 @@ public class SQLDatabasePropertyManager implements Reloadable {
         Lock lock = lockMaker.readLock();
         String value;
         try {
+
+            // check to see store has changed
+            if (RELOAD_STRATEGY.STORE_CHANGED.equals(this.reloadStrategy)) {
+                loadProperties();
+            }
+
             lock.lock();
             value = propertiesMap.get(key);
+        } catch (SQLException sqle) {
+            throw new PropertyException(sqle);
         } finally {
             lock.unlock();
         }
@@ -181,11 +178,18 @@ public class SQLDatabasePropertyManager implements Reloadable {
     @Override
     public Map<String, String> getProperties() throws PropertyException {
 
-        Map<String, String> propertiesMapCopy = new HashMap<String, String>();
+        Map<String, String> propertiesMapCopy = new HashMap<>();
         Lock lock = lockMaker.readLock();
         try {
+
+            // check to see store has changed
+            if (RELOAD_STRATEGY.STORE_CHANGED.equals(this.reloadStrategy)) {
+                loadProperties();
+            }
             lock.lock();
             propertiesMapCopy.putAll(propertiesMap);
+        } catch (SQLException sqle) {
+            throw new PropertyException(sqle);
         } finally {
             lock.unlock();
         }

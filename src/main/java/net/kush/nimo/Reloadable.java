@@ -10,6 +10,8 @@ import java.util.Map;
  */
 public interface Reloadable {
 
+    public static final String DEFAULT_RELOAD_INTERVAL ="*/1 * * * *";
+
     /**
      * A reload strategy to use for reloading the file containing the properties
      * configuration

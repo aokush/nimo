@@ -2,6 +2,12 @@ package net.kush.nimo;
 
 import it.sauronsoftware.cron4j.Scheduler;
 
+
+/**
+ * A utility for common operations
+ *
+ * @author Adebiyi Kuseju (Kush)
+ */
 public class Util {
 
     private static Scheduler scheduler;

@@ -1,6 +1,7 @@
 package net.kush.nimo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.File;
@@ -98,6 +99,7 @@ public class SQLDatabasePropertyManagerTest {
         SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
                 ds);
         String result = instance.getProperty(KEY_2);
+        instance.close();
         assertEquals(VALUE_2, result);
     }
 
@@ -115,29 +117,42 @@ public class SQLDatabasePropertyManagerTest {
 
         Map<String, String> result = instance.getProperties();
         assertEquals(expResult, result);
+        instance.close();
     }
 
     @Test
     public void testGetPropertyForIntervalReload() throws Exception {
         SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, 2);
+                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
-        Connection conn = ds.getConnection();
-        Statement stmt = conn.createStatement();
-        stmt.executeUpdate(
-                String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED, TABLE_COL_KEY, KEY_2));
-        stmt.close();
-        conn.close();
-        stmt = null;
-        conn = null;
+        try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED,
+                    TABLE_COL_KEY, KEY_2));
+        }
 
         TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
+        instance.close();
+    }
+
+    @Test
+    public void testGetProperty_Store_Changed() throws Exception {
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
+                ds, Reloadable.RELOAD_STRATEGY.STORE_CHANGED, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+
+        try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED,
+                    TABLE_COL_KEY, KEY_2));
+        }
+
+        //TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
+        assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2));
+        instance.close();
     }
 
     @Test
     public void testGetPropertiesForIntervalReload() throws Exception {
         SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, 2);
+                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -161,6 +176,7 @@ public class SQLDatabasePropertyManagerTest {
             expResult.put(KEY_3, VALUE_3);
 
             TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(expResult, instance.getProperties()));
+            instance.close();
 
         }
     }
@@ -202,6 +218,7 @@ public class SQLDatabasePropertyManagerTest {
         instance.setProperties(expResult, true);
 
         assertEquals(expResult, instance.getProperties());
+        instance.close();
     }
 
     @Test
@@ -223,6 +240,37 @@ public class SQLDatabasePropertyManagerTest {
         instance.setProperties(expResult, false);
 
         assertEquals(expResult, instance.getProperties());
+        instance.close();
+    }
+
+    @Test
+    public void testSetProperty_External_Update() throws Exception {
+
+        Reloadable instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE, ds,
+                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+
+        String newProp = "newProps1";
+        instance.setProperty(newProp, "Line1");
+
+        assertNull(instance.getProperty(newProp));
+
+    }
+
+    @Test
+    public void testSetProperties_External_Update() throws Exception {
+
+        Reloadable instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE, ds,
+                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+
+        String newProp = "newProps1";
+        Map<String, String> newProps = new HashMap<String, String>();
+        newProps.put(newProp, "Line1");
+
+        instance.setProperties(newProps, true);
+
+        assertNull(instance.getProperty(newProp));
+        instance.close();
+
     }
 
     @Test
@@ -251,9 +299,23 @@ public class SQLDatabasePropertyManagerTest {
     }
 
     @Test
-    public void testInvalidReloadInterval() throws Exception {
+    public void testInvalidReloadCronExpression() throws Exception {
 
         assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
-                TABLE_COL_VALUE, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, 0));
+                TABLE_COL_VALUE, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, "gsgs"));
+    }
+
+    @Test
+    public void testNullReloadStrategy() throws Exception {
+
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
+                TABLE_COL_VALUE, ds, null, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL));
+    }
+
+    @Test
+    public void testNullUpdateStrategy() throws Exception {
+
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
+                TABLE_COL_VALUE, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, null, TestUtils.DEFAULT_RELOAD_INTERVAL));
     }
 }

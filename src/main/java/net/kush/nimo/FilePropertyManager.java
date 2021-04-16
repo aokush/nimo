@@ -1,9 +1,7 @@
 package net.kush.nimo;
 
-import it.sauronsoftware.cron4j.Scheduler;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.HashMap;
@@ -12,6 +10,9 @@ import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import it.sauronsoftware.cron4j.InvalidPatternException;
+import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for file based properties configuration
@@ -28,6 +29,7 @@ public class FilePropertyManager implements Reloadable {
     private ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private long lastModified;
     private static final String FILE_NOT_FOUND_TMPLT = "'%s' does not exist";
+    private static final String FILE_READ_ERROR_TMPLT = "Error reading file '%s'";
     private String scheduleId;
 
     /**
@@ -62,7 +64,7 @@ public class FilePropertyManager implements Reloadable {
      */
     public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy)
             throws PropertyException {
-        this(filePath, strategy, updateStrategy, 1);
+        this(filePath, strategy, updateStrategy, DEFAULT_RELOAD_INTERVAL);
     }
 
     /**
@@ -75,13 +77,13 @@ public class FilePropertyManager implements Reloadable {
      *                       Reloadable.RELOAD_STRATEGY.NONE, interval is ignored.
      * @param updateStrategy The update strategy to use in getting updates from from
      *                       permanent store
-     * @param interval       An integer representing interval in minutes between
-     *                       file reloads. Value must be 1 and above.
-     * @throws PropertyException If filePath does not refer to an existing file or
-     *                           if interval is less than one(1)
+     * @param cronExpression A valid cron expression that is used for reloading
+     *                       configuration if reload strategy is
+     *                       Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @throws PropertyException If filePath does not refer to an existing file
      */
-    public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy, int interval)
-            throws PropertyException {
+    public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy,
+            String cronExpression) throws PropertyException {
         File file = new File(filePath);
 
         if (!file.exists() || !file.isFile()) {
@@ -93,19 +95,16 @@ public class FilePropertyManager implements Reloadable {
 
         if (RELOAD_STRATEGY.INTERVAL.equals(strategy)) {
 
-            if (interval < 1) {
-                throw new PropertyException(String.format("interval must be a number greater than '%s'", 0));
-            }
-
-            StringBuilder schedulePattern = new StringBuilder();
-            schedulePattern.append("*/").append(interval).append(" * * * *");
-
             scheduler = Util.getOrCreateScheduler();
             FileTask task = new FileTask();
             // Make sure file is loaded before actual scheduling begins
             task.run();
 
-            scheduleId = scheduler.schedule(schedulePattern.toString(), task);
+            try {
+                scheduleId = scheduler.schedule(cronExpression, task);
+            } catch (InvalidPatternException ipe) {
+                throw new PropertyException(ipe);
+            }
 
         } else {
             try {
@@ -160,10 +159,8 @@ public class FilePropertyManager implements Reloadable {
             }
 
             value = propertiesMap.get(key);
-        } catch (FileNotFoundException nfe) {
-            throw new PropertyException(String.format(FILE_NOT_FOUND_TMPLT, filePath));
         } catch (IOException io) {
-            throw new PropertyException(String.format("Error reading file '%s'", filePath));
+            throw new PropertyException(String.format(FILE_READ_ERROR_TMPLT, filePath));
         }
         return value;
     }
@@ -195,10 +192,8 @@ public class FilePropertyManager implements Reloadable {
             }
 
             propertiesMapCopy.putAll(propertiesMap);
-        } catch (FileNotFoundException nfe) {
-            throw new PropertyException(String.format(FILE_NOT_FOUND_TMPLT, filePath));
         } catch (IOException io) {
-            throw new PropertyException(String.format("Error reading file '%s'", filePath));
+            throw new PropertyException(String.format(FILE_READ_ERROR_TMPLT, filePath));
         }
 
         return propertiesMapCopy;

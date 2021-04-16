@@ -1,8 +1,5 @@
 package net.kush.nimo;
 
-import it.sauronsoftware.cron4j.Scheduler;
-import javax.naming.Context;
-import javax.naming.NamingException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -10,6 +7,12 @@ import java.util.Properties;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import javax.naming.Context;
+import javax.naming.NamingException;
+
+import it.sauronsoftware.cron4j.InvalidPatternException;
+import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for JNDI based properties configuration
@@ -40,7 +43,7 @@ public class JNDILoader implements Reloadable {
      *         does not refer to an existing file
      */
     public JNDILoader(Context context, String jndiName) throws PropertyException {
-        this(context, jndiName, 1);
+        this(context, jndiName, DEFAULT_RELOAD_INTERVAL);
     }
 
     /**
@@ -53,12 +56,11 @@ public class JNDILoader implements Reloadable {
      *                "jndiName"
      * @param jndiName A unique name identifying a property implementation
      *                 object in a naming server.
-     * @param interval An integer representing interval in minutes between properties
-     *                 reloads. Value must be 1 and above.
-     * @throws PropertyException If context is null or jndiName is null or
-     *                 if interval is less than one(1)
+      * @param cronExpression  A valid cron expression that is used for reloading configuration if
+     *                        reload strategy is Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @throws PropertyException If context is null or jndiName is null
      */
-    public JNDILoader(Context context, String jndiName, int interval) throws PropertyException {
+    public JNDILoader(Context context, String jndiName, String cronExpression) throws PropertyException {
         this.jndiName = jndiName;
         this.context = context;
 
@@ -76,16 +78,13 @@ public class JNDILoader implements Reloadable {
             throw new PropertyException(sqe);
         }
 
-        if (interval < 1) {
-            throw new PropertyException(String.format("interval must be a number greater than '%s'", 0));
-        }
-
-        StringBuilder schedulePattern = new StringBuilder();
-        schedulePattern.append("*/").append(interval).append(" * * * *");
-
         scheduler = Util.getOrCreateScheduler();
         JNDILoader.ReadTask task = new JNDILoader.ReadTask();
-        scheduleId = scheduler.schedule(schedulePattern.toString(), task);
+        try {
+            scheduleId = scheduler.schedule(cronExpression, task);
+        } catch (InvalidPatternException ipe) {
+            throw new PropertyException(ipe);
+        }
 
     }
     
@@ -164,7 +163,7 @@ public class JNDILoader implements Reloadable {
             Properties prop = (Properties) object;
             
             Iterator<String> itr = prop.stringPropertyNames().iterator();
-            temp = new HashMap<String, String>();
+            temp = new HashMap<>();
             
             String key;
             while (itr.hasNext()) {

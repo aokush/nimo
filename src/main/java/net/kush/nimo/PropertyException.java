@@ -26,6 +26,15 @@ public class PropertyException extends Exception {
 
     /**
      * Creates an instance of a PropertyException with a parent exception
+     * @param msg
+     * @param t
+     */
+    public PropertyException(String msg,Throwable t) {
+        super(msg, t);
+    }
+
+    /**
+     * Creates an instance of a PropertyException with a parent exception
      *
      * @param t
      */

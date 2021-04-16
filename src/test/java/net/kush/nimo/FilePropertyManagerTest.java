@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.Writer;
 import java.util.HashMap;
@@ -173,7 +174,7 @@ public class FilePropertyManagerTest {
     public void testGetPropertiesExternalUpdateStrategy() throws Exception {
 
         Reloadable instance = new FilePropertyManager(file.getAbsolutePath(), Reloadable.RELOAD_STRATEGY.STORE_CHANGED,
-                Reloadable.UPDATE_STRATEGY.EXTERNAL, 2);
+                Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -405,7 +406,7 @@ public class FilePropertyManagerTest {
         String expectedResult1 = "Changed1";
         String expectedResult2 = "Changed2";
         Reloadable instance = new FilePropertyManager(file.getAbsolutePath(), Reloadable.RELOAD_STRATEGY.INTERVAL,
-                Reloadable.UPDATE_STRATEGY.EXTERNAL, 2);
+                Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         BufferedWriter writer = getWriterForFile();
 
@@ -428,7 +429,7 @@ public class FilePropertyManagerTest {
     public void testGetPropertiesPropertyChangeForIntervalStrategy() throws Exception {
 
         Reloadable instance = new FilePropertyManager(file.getAbsolutePath(), Reloadable.RELOAD_STRATEGY.INTERVAL,
-                Reloadable.UPDATE_STRATEGY.EXTERNAL, 2);
+                Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -575,6 +576,27 @@ public class FilePropertyManagerTest {
     }
 
     @Test
+    public void testSetProperties_External_Update() throws Exception {
+
+        Reloadable instance = new FilePropertyManager(file.getAbsolutePath(), Reloadable.RELOAD_STRATEGY.STORE_CHANGED,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
+
+       
+        String newProp = "newProps1";
+        try (FileOutputStream outStream = new FileOutputStream(file)) {
+
+            Map<String, String> newProps = new HashMap<String, String>();
+            newProps.put(newProp, "Line1");
+
+            instance.setProperties(newProps, true);
+
+        }
+
+        assertNull(instance.getProperty(newProp));
+
+    }
+
+    @Test
     public void testNoFileForStoreChangeStrategy() throws Exception {
         assertThrows(PropertyException.class, () -> new FilePropertyManager("invalid.txt",
                 Reloadable.RELOAD_STRATEGY.STORE_CHANGED, Reloadable.UPDATE_STRATEGY.EXTERNAL));
@@ -591,7 +613,7 @@ public class FilePropertyManagerTest {
     @Test
     public void testInvalidReloadInterval() throws Exception {
         assertThrows(PropertyException.class, () -> new FilePropertyManager(file.getAbsolutePath(),
-                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, 0));
+                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, "htif"));
     }
 
     private BufferedWriter getWriterForFile() throws Exception {

@@ -1,6 +1,5 @@
 package net.kush.nimo;
 
-import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
@@ -9,7 +8,7 @@ import static org.mockito.Mockito.when;
 import java.rmi.RemoteException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
+import java.util.Properties;
 
 import javax.naming.Context;
 import javax.naming.InitialContext;
@@ -76,6 +75,7 @@ public class JNDILoaderTest {
     public void testSelectAllQuery() throws Exception {
         JNDILoader instance = new JNDILoader(ctx, TABLE_NAME);
         String result = instance.getProperty(KEY_2);
+        instance.close();
         assertEquals(VALUE_2, result);
     }
 
@@ -86,7 +86,25 @@ public class JNDILoaderTest {
     public void testGetProperty() throws Exception {
         JNDILoader instance = new JNDILoader(ctx, TABLE_NAME);
         String result = instance.getProperty(KEY_2);
+        instance.close();
         assertEquals(VALUE_2, result);
+        
+    }
+
+    /**
+     * Test of getProperty method, of class JNDILoader.
+     */
+    @Test
+    public void testGetProperty_Properties() throws Exception {
+        Properties props = new Properties();
+        props.setProperty(KEY_2, VALUE_2);
+        when(ctx.lookup(TABLE_NAME)).thenReturn(props);
+
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME);
+        String result = instance.getProperty(KEY_2);
+        instance.close();
+        assertEquals(VALUE_2, result);
+        
     }
 
     /**
@@ -101,6 +119,7 @@ public class JNDILoaderTest {
         expResult.put(KEY_2, VALUE_2);
 
         Map<String, String> result = instance.getProperties();
+        instance.close();
         assertEquals(expResult, result);
     }
 
@@ -114,11 +133,12 @@ public class JNDILoaderTest {
 
         when(ctx.lookup(TABLE_NAME)).thenReturn(props);
         TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
+        instance.close();
     }
 
     @Test
     public void testGetPropertyForSpecificReload() throws Exception {
-        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, 2);
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         Map<String, String> props = new HashMap<String, String>();
         props.put(KEY_1, VALUE_1);
@@ -126,6 +146,7 @@ public class JNDILoaderTest {
 
         when(ctx.lookup(TABLE_NAME)).thenReturn(props);
         TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
+        instance.close();
     }
 
     @Test
@@ -152,11 +173,12 @@ public class JNDILoaderTest {
         expResult.put(KEY_3, VALUE_3);
 
         TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(expResult, instance.getProperties()));
+        instance.close();
     }
 
     @Test
     public void testGetPropertiesorSpecificReload() throws Exception {
-        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, 2);
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.DEFAULT_RELOAD_INTERVAL);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -178,6 +200,7 @@ public class JNDILoaderTest {
         expResult.put(KEY_3, VALUE_3);
 
         TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(expResult, instance.getProperties()));
+        instance.close();
     }
 
     @Test
@@ -191,7 +214,26 @@ public class JNDILoaderTest {
     }
 
     @Test
-    public void testInvalidReloadInterval() throws Exception {
-        assertThrows(PropertyException.class, () -> new JNDILoader(ctx, TABLE_NAME, 0));
+    public void testInvalidReloadCronExpression() throws Exception {
+        assertThrows(PropertyException.class, () -> new JNDILoader(ctx, TABLE_NAME, "jhg"));
     }
+
+    @Test
+    public void testSetproperty() throws Exception {
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME);
+        assertThrows(UnsupportedOperationException.class, () -> instance.setProperty("x", "y"));
+    }
+
+    @Test
+    public void testSetproperties() throws Exception {
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME);
+        assertThrows(UnsupportedOperationException.class, () -> instance.setProperties(new HashMap<>(), true));
+    }
+
+    @Test
+    public void testInvalidBoundObject() throws Exception {
+        when(ctx.lookup(TABLE_NAME)).thenReturn(null);
+        assertThrows(PropertyException.class, () -> new JNDILoader(ctx, TABLE_NAME));
+    }
+
 }
