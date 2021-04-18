@@ -188,7 +188,7 @@ public class JNDILoaderTest {
         Map<String, String> result = instance.getProperties();
         assertEquals(expResult, result);
 
-        Map<String, String> props = new HashMap<String, String>();
+        Map<String, String> props = new HashMap<>();
         props.put(KEY_1, VALUE_1_CHANGED);
         props.put(KEY_2, VALUE_2_CHANGED);
         props.put(KEY_3, VALUE_3);
@@ -201,6 +201,26 @@ public class JNDILoaderTest {
         expResult.put(KEY_3, VALUE_3);
 
         TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(expResult, instance.getProperties()));
+        instance.close();
+    }
+
+    @Test
+    public void testGetProperties_Bound_Properties() throws Exception {
+
+        Properties props = new Properties();
+        props.put(KEY_1, VALUE_1);
+        props.put(KEY_2, VALUE_2);
+
+        when(ctx.lookup(TABLE_NAME)).thenReturn(props);
+
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS);
+
+        Map<String, String> expResult = new HashMap<String, String>();
+        expResult.put(KEY_1, VALUE_1);
+        expResult.put(KEY_2, VALUE_2);
+
+        assertEquals(expResult, instance.getProperties());
+       
         instance.close();
     }
 

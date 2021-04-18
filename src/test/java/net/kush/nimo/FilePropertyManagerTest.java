@@ -569,6 +569,19 @@ public class FilePropertyManagerTest {
         instance.close();
     }
 
+    @Test
+    public void testSetProperty_External_Update() throws Exception {
+
+        Reloadable instance = new FilePropertyManager(file.getAbsolutePath(), Reloadable.RELOAD_STRATEGY.NONE,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
+
+        String newProp = "newProps1";
+        instance.setProperty(newProp, "Line1");
+
+        assertNull(instance.getProperty(newProp));
+
+    }
+
     /**
      * Test of getProperty method, of class FileLoader.
      */

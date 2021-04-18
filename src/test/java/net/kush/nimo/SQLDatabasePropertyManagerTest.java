@@ -151,9 +151,25 @@ public class SQLDatabasePropertyManagerTest {
                     String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_2_CHANGED, keyColName(), KEY_2));
         }
 
-        // TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(VALUE_2_CHANGED,
-        // instance.getProperty(KEY_2)));
         assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2));
+        instance.close();
+    }
+
+    @Test
+    public void testGetProperties_Store_Changed() throws Exception {
+        SQLDatabasePropertyManager instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.STORE_CHANGED,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
+
+        try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate(
+                    String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_2_CHANGED, keyColName(), KEY_2));
+        }
+
+        Map<String, String> expResult = new HashMap<String, String>();
+        expResult.put(KEY_1, VALUE_1);
+        expResult.put(KEY_2, VALUE_2_CHANGED);
+
+        assertEquals(expResult, instance.getProperties());
         instance.close();
     }
 

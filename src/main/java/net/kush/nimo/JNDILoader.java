@@ -143,21 +143,12 @@ public class JNDILoader implements Reloadable {
 
     private Map<String, String> convertBoundObjectToMap(Object object) {
 
-        if (object == null || !(object instanceof Map || object instanceof Properties)) {
+        if (!(object instanceof Map)) {
             throw new IllegalArgumentException();
         }
 
-        Map<String, String> props = null;
-        if (object instanceof Map) {
-            props = (Map<String, String>) object;
-        } else if (object instanceof Properties) {
-            Properties prop = (Properties) object;
-            Map<String, String> temp = new HashMap<>();
-            prop.entrySet().forEach(kv -> temp.put(kv.getKey().toString(), kv.getValue().toString()));
-            props = temp;
-        }
+        return (Map<String, String>) object;
 
-        return props;
     }
 
     public void setProperty(String key, String value) throws PropertyException {
