@@ -9,6 +9,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -16,9 +19,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.sql.DataSource;
-
-import it.sauronsoftware.cron4j.InvalidPatternException;
-import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for database based properties configuration
@@ -29,17 +29,22 @@ public class SQLDatabasePropertyManager implements Reloadable {
 
     private static final Logger logger = Logger.getLogger(SQLDatabasePropertyManager.class.getName());
 
+    public static final String TABLE_NAME = "table-name";
+    public static final String KEY_COL_NAME = "key-col-name";
+    public static final String VALUE_COL_NAME = "value-col-name";
+
     private final String selectQueryTemplate;
     private final String insertQueryTemplate;
     private final String updateQueryTemplate;
-    private String tableName;
+
+    private final Map<String, String> dbTableProps;
 
     private Reloadable.RELOAD_STRATEGY reloadStrategy;
     private Reloadable.UPDATE_STRATEGY updateStrategy;
     private Map<String, String> propertiesMap = new HashMap<>();
 
-    private Scheduler scheduler;
-    private String scheduleId;
+    private ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> scheduleFuture;
     private ReadWriteLock lockMaker = new ReentrantReadWriteLock();
     private DataSource ds;
 
@@ -55,10 +60,9 @@ public class SQLDatabasePropertyManager implements Reloadable {
      * @throws PropertyException If selectQuery is not a valid sql query for the
      *                           target database
      */
-    public SQLDatabasePropertyManager(String tableName, String keyColumnName, String valueColumnName, DataSource ds)
-            throws PropertyException {
-        this(tableName, keyColumnName, valueColumnName, ds, Reloadable.RELOAD_STRATEGY.NONE,
-                Reloadable.UPDATE_STRATEGY.INTERNAL, DEFAULT_RELOAD_INTERVAL);
+    public SQLDatabasePropertyManager(Map<String, String> dbTableProps, DataSource ds) throws PropertyException {
+        this(dbTableProps, ds, Reloadable.RELOAD_STRATEGY.NONE, Reloadable.UPDATE_STRATEGY.INTERNAL,
+                DEFAULT_RELOAD_INTERVAL, DEFAULT_TIME_UNIT);
     }
 
     /**
@@ -81,49 +85,30 @@ public class SQLDatabasePropertyManager implements Reloadable {
      *
      * @param updateStrategy  The update strategy to use in getting updates from
      *                        from database
-     * @param cronExpression  A valid cron expression that is used for reloading configuration if
-     *                        reload strategy is Reloadable.RELOAD_STRATEGY.INTERNAL.
-     * @throws PropertyException If selectQuery is null or invalid sql query
+     * @param interval        A long that determines how often property should be reloaded.
+     *                        Value must be greater than zero
+     *                        Only applicable if Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @param timeUnit        The time unit for the reload interval
+     * @throws PropertyException If selectQuery is null or invalid sql query or interval is not a
+     *                           positive whole number.
      */
-    public SQLDatabasePropertyManager(String tableName, String keyColumnName, String valueColumnName, DataSource ds,
-            Reloadable.RELOAD_STRATEGY reloadStrategy, Reloadable.UPDATE_STRATEGY updateStrategy, String cronExpression)
-            throws PropertyException {
+    public SQLDatabasePropertyManager(Map<String, String> dbTableProps, DataSource ds,
+            Reloadable.RELOAD_STRATEGY reloadStrategy, Reloadable.UPDATE_STRATEGY updateStrategy, long interval,
+            TimeUnit timeUnit) throws PropertyException {
         this.ds = ds;
-        this.tableName = tableName;
+        ;
         this.reloadStrategy = reloadStrategy;
         this.updateStrategy = updateStrategy;
 
-        selectQueryTemplate = "SELECT " + keyColumnName + ", " + valueColumnName + " FROM " + tableName;
-        insertQueryTemplate = "INSERT INTO " + tableName + " VALUES('%s', '%s')";
-        updateQueryTemplate = "UPDATE " + tableName + " SET " + valueColumnName + "= '%s' WHERE " + keyColumnName
-                + " = '%s'";
+        validateArgs(dbTableProps, ds, reloadStrategy, updateStrategy, interval);
 
-        // check select query is valid
-        if (tableName == null || tableName.isEmpty() || keyColumnName == null || keyColumnName.isEmpty()
-                || valueColumnName == null || valueColumnName.isEmpty()) {
+        selectQueryTemplate = "SELECT " + dbTableProps.get(KEY_COL_NAME) + ", " + dbTableProps.get(VALUE_COL_NAME)
+                + " FROM " + dbTableProps.get(TABLE_NAME);
+        insertQueryTemplate = "INSERT INTO " + dbTableProps.get(TABLE_NAME) + " VALUES('%s', '%s')";
+        updateQueryTemplate = "UPDATE " + dbTableProps.get(TABLE_NAME) + " SET " + dbTableProps.get(VALUE_COL_NAME)
+                + "= '%s' WHERE " + dbTableProps.get(KEY_COL_NAME) + " = '%s'";
 
-            throw new PropertyException(
-                    "Please provide a valid 'tableName', 'keyColumnName' and 'valueColumnName' cannot be null or empty");
-
-        }
-
-        if (reloadStrategy == null) {
-            throw new PropertyException("Inavlid 'reloadStrategy'");
-        }
-
-        if (updateStrategy == null) {
-            throw new PropertyException("Inavlid 'updateStrategy'");
-        }
-
-        if (RELOAD_STRATEGY.STORE_CHANGED.equals(reloadStrategy)) {
-            logger.log(Level.WARNING, "'Reloadable.RELOAD_STRATEGY.STORE_CHANGED' may lead to poor performance");
-        }
-
-        try (Connection conn = ds.getConnection()) {
-
-        } catch (Exception sqle) {
-            throw new PropertyException("Cannot connection to database", sqle);
-        }
+        this.dbTableProps = dbTableProps;
 
         try {
             loadProperties();
@@ -135,12 +120,7 @@ public class SQLDatabasePropertyManager implements Reloadable {
 
             scheduler = Util.getOrCreateScheduler();
             SQLDatabasePropertyManager.ReadTask task = new SQLDatabasePropertyManager.ReadTask();
-
-            try {
-                scheduleId = scheduler.schedule(cronExpression, task);
-            } catch (InvalidPatternException ipe) {
-                throw new PropertyException(ipe);
-            }
+            scheduleFuture = scheduler.scheduleWithFixedDelay(task, 1, interval, timeUnit);
 
         }
 
@@ -199,7 +179,38 @@ public class SQLDatabasePropertyManager implements Reloadable {
 
     @Override
     public void close() {
-        Util.deschedule(scheduleId);
+        Util.deschedule(scheduleFuture);
+    }
+
+    private void validateArgs(Map<String, String> dbTableProps, DataSource ds,
+            Reloadable.RELOAD_STRATEGY reloadStrategy, Reloadable.UPDATE_STRATEGY updateStrategy, long interval)
+            throws PropertyException {
+
+
+        String tableName = dbTableProps.get(TABLE_NAME);
+        String keyColumnName = dbTableProps.get(KEY_COL_NAME);
+        String valueColumnName = dbTableProps.get(VALUE_COL_NAME);
+
+        // check select query is valid
+        if (tableName == null || tableName.isEmpty() || keyColumnName == null || keyColumnName.isEmpty()
+                || valueColumnName == null || valueColumnName.isEmpty()) {
+            throw new PropertyException(String.format(
+                    "Please provide a valid tabel properties -'%s', '%s' and '%s' cannot be null or empty", TABLE_NAME,
+                    KEY_COL_NAME, VALUE_COL_NAME));
+        }
+
+        Util.validateArgs(reloadStrategy, updateStrategy, interval);
+
+        if (RELOAD_STRATEGY.STORE_CHANGED.equals(reloadStrategy)) {
+            logger.log(Level.WARNING, "'Reloadable.RELOAD_STRATEGY.STORE_CHANGED' may lead to poor performance");
+        }
+
+        try (Connection conn = ds.getConnection()) {
+            logger.log(Level.FINEST, "Connection test succeeded");
+        } catch (Exception sqle) {
+            throw new PropertyException("Cannot connection to database", sqle);
+        }
+
     }
 
     private void loadProperties() throws SQLException {
@@ -287,7 +298,7 @@ public class SQLDatabasePropertyManager implements Reloadable {
 
             if (refresh) {
 
-                stmt.addBatch(String.format("DELETE FROM %s", tableName));
+                stmt.addBatch(String.format("DELETE FROM %s", dbTableProps.get(TABLE_NAME)));
 
                 Set<Entry<String, String>> propSet = propertiesMap.entrySet();
 

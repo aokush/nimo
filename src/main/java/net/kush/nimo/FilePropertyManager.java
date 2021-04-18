@@ -9,10 +9,10 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import it.sauronsoftware.cron4j.InvalidPatternException;
-import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for file based properties configuration
@@ -25,12 +25,12 @@ public class FilePropertyManager implements Reloadable {
     private RELOAD_STRATEGY strategy;
     private UPDATE_STRATEGY updateStrategy;
     private Map<String, String> propertiesMap;
-    private Scheduler scheduler;
+    private ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> scheduleFuture;
     private ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private long lastModified;
     private static final String FILE_NOT_FOUND_TMPLT = "'%s' does not exist";
     private static final String FILE_READ_ERROR_TMPLT = "Error reading file '%s'";
-    private String scheduleId;
 
     /**
      * Creates a new FileLoader instance.
@@ -64,7 +64,7 @@ public class FilePropertyManager implements Reloadable {
      */
     public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy)
             throws PropertyException {
-        this(filePath, strategy, updateStrategy, DEFAULT_RELOAD_INTERVAL);
+        this(filePath, strategy, updateStrategy, DEFAULT_RELOAD_INTERVAL, DEFAULT_TIME_UNIT);
     }
 
     /**
@@ -77,18 +77,17 @@ public class FilePropertyManager implements Reloadable {
      *                       Reloadable.RELOAD_STRATEGY.NONE, interval is ignored.
      * @param updateStrategy The update strategy to use in getting updates from from
      *                       permanent store
-     * @param cronExpression A valid cron expression that is used for reloading
-     *                       configuration if reload strategy is
-     *                       Reloadable.RELOAD_STRATEGY.INTERNAL.
-     * @throws PropertyException If filePath does not refer to an existing file
+     * @param interval       A long that determines how often property should be
+     *                       reloaded. Value must be greater than zero Only
+     *                       applicable if Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @param timeUnit       The time unit for the reload interval
+     * @throws PropertyException If filePath does not refer to an existing file or
+     *                           interval is not a positive whole number.
      */
-    public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy,
-            String cronExpression) throws PropertyException {
-        File file = new File(filePath);
+    public FilePropertyManager(String filePath, RELOAD_STRATEGY strategy, UPDATE_STRATEGY updateStrategy, long interval,
+            TimeUnit timeUnit) throws PropertyException {
+        validateArgs(filePath, strategy, updateStrategy, interval);
 
-        if (!file.exists() || !file.isFile()) {
-            throw new PropertyException(String.format(FILE_NOT_FOUND_TMPLT, filePath));
-        }
         this.filePath = filePath;
         this.strategy = strategy;
         this.updateStrategy = updateStrategy;
@@ -97,14 +96,7 @@ public class FilePropertyManager implements Reloadable {
 
             scheduler = Util.getOrCreateScheduler();
             FileTask task = new FileTask();
-            // Make sure file is loaded before actual scheduling begins
-            task.run();
-
-            try {
-                scheduleId = scheduler.schedule(cronExpression, task);
-            } catch (InvalidPatternException ipe) {
-                throw new PropertyException(ipe);
-            }
+            scheduleFuture = scheduler.scheduleWithFixedDelay(task, 1, interval, timeUnit);
 
         } else {
             try {
@@ -235,7 +227,19 @@ public class FilePropertyManager implements Reloadable {
 
     @Override
     public void close() {
-        Util.deschedule(scheduleId);
+        Util.deschedule(scheduleFuture);
+    }
+
+    private void validateArgs(String filePath, Reloadable.RELOAD_STRATEGY reloadStrategy,
+            Reloadable.UPDATE_STRATEGY updateStrategy, long interval) throws PropertyException {
+        File file = new File(filePath);
+
+        if (!file.exists() || !file.isFile()) {
+            throw new PropertyException(String.format(FILE_NOT_FOUND_TMPLT, filePath));
+        }
+
+        Util.validateArgs(reloadStrategy, updateStrategy, interval);
+
     }
 
     private void loadFile() throws IOException {
@@ -290,8 +294,16 @@ public class FilePropertyManager implements Reloadable {
 
     class FileTask implements Runnable {
 
+        FileTask() {
+            init();
+        }
+
         @Override
         public void run() {
+            init();
+        }
+
+        void init() {
             try {
                 lock.writeLock().lock();
                 loadFile();

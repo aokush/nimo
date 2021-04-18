@@ -9,6 +9,7 @@ import java.rmi.RemoteException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import javax.naming.Context;
 import javax.naming.InitialContext;
@@ -138,7 +139,7 @@ public class JNDILoaderTest {
 
     @Test
     public void testGetPropertyForSpecificReload() throws Exception {
-        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS);
 
         Map<String, String> props = new HashMap<String, String>();
         props.put(KEY_1, VALUE_1);
@@ -178,7 +179,7 @@ public class JNDILoaderTest {
 
     @Test
     public void testGetPropertiesorSpecificReload() throws Exception {
-        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        JNDILoader instance = new JNDILoader(ctx, TABLE_NAME, TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -214,8 +215,8 @@ public class JNDILoaderTest {
     }
 
     @Test
-    public void testInvalidReloadCronExpression() throws Exception {
-        assertThrows(PropertyException.class, () -> new JNDILoader(ctx, TABLE_NAME, "jhg"));
+    public void testInvalidReloadInterval() throws Exception {
+        assertThrows(PropertyException.class, () -> new JNDILoader(ctx, TABLE_NAME, 0, TimeUnit.SECONDS));
     }
 
     @Test

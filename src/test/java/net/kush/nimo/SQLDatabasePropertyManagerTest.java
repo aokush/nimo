@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
@@ -29,9 +30,12 @@ public class SQLDatabasePropertyManagerTest {
     // private static NetworkServerControl dbServer;
     private static DataSource ds;
 
-    private static final String TABLE_NAME = "KEYVALUE";
-    private static final String TABLE_COL_KEY = "ID";
-    private static final String TABLE_COL_VALUE = "VALUE";
+    /*
+     * private static final String TABLE_NAME = "KEYVALUE"; private static final
+     * String TABLE_COL_KEY = "ID"; private static final String TABLE_COL_VALUE =
+     * "VALUE";
+     */
+    private static Map<String, String> dbTableProps;
 
     // private static final String TABLE_SELECT_ALL_QRY = "SELECT * FROM %s";
     // private static final String TABLE_SELECT_COL_QRY = "SELECT %s FROM %s";
@@ -56,6 +60,11 @@ public class SQLDatabasePropertyManagerTest {
         eds.setDatabaseName("nimodb");
 
         ds = eds;
+
+        dbTableProps = new HashMap<>();
+        dbTableProps.put(SQLDatabasePropertyManager.TABLE_NAME, "KEYVALUE");
+        dbTableProps.put(SQLDatabasePropertyManager.KEY_COL_NAME, "ID");
+        dbTableProps.put(SQLDatabasePropertyManager.VALUE_COL_NAME, "VALUE");
     }
 
     @AfterAll
@@ -70,10 +79,10 @@ public class SQLDatabasePropertyManagerTest {
 
         Statement stmt = conn.createStatement();
 
-        stmt.executeUpdate(String.format("CREATE TABLE %s (%s varchar(40), %s varchar(40))", TABLE_NAME, TABLE_COL_KEY,
-                TABLE_COL_VALUE));
-        stmt.addBatch(String.format(TABLE_INSERT_QRY, TABLE_NAME, KEY_1, VALUE_1));
-        stmt.addBatch(String.format(TABLE_INSERT_QRY, TABLE_NAME, KEY_2, VALUE_2));
+        stmt.executeUpdate(String.format("CREATE TABLE %s (%s varchar(40), %s varchar(40))", tableName(), keyColName(),
+                valueColName()));
+        stmt.addBatch(String.format(TABLE_INSERT_QRY, tableName(), KEY_1, VALUE_1));
+        stmt.addBatch(String.format(TABLE_INSERT_QRY, tableName(), KEY_2, VALUE_2));
         stmt.executeBatch();
 
         stmt.close();
@@ -85,7 +94,7 @@ public class SQLDatabasePropertyManagerTest {
         Connection conn = ds.getConnection();
 
         Statement stmt = conn.createStatement();
-        stmt.execute(String.format("DROP TABLE %s", TABLE_NAME));
+        stmt.execute(String.format("DROP TABLE %s", tableName()));
 
         stmt.close();
         conn.close();
@@ -96,8 +105,7 @@ public class SQLDatabasePropertyManagerTest {
      */
     @Test
     public void testGetProperty() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
         String result = instance.getProperty(KEY_2);
         instance.close();
         assertEquals(VALUE_2, result);
@@ -108,8 +116,7 @@ public class SQLDatabasePropertyManagerTest {
      */
     @Test
     public void testGetProperties() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -122,12 +129,12 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testGetPropertyForIntervalReload() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        SQLDatabasePropertyManager instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.INTERVAL,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
 
         try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED,
-                    TABLE_COL_KEY, KEY_2));
+            stmt.executeUpdate(
+                    String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_2_CHANGED, keyColName(), KEY_2));
         }
 
         TestUtils.maxWaitFor(130).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
@@ -136,23 +143,24 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testGetProperty_Store_Changed() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds, Reloadable.RELOAD_STRATEGY.STORE_CHANGED, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        SQLDatabasePropertyManager instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.STORE_CHANGED,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
 
         try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.executeUpdate(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED,
-                    TABLE_COL_KEY, KEY_2));
+            stmt.executeUpdate(
+                    String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_2_CHANGED, keyColName(), KEY_2));
         }
 
-        //TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2)));
+        // TestUtils.maxWaitFor(70).untilAsserted(() -> assertEquals(VALUE_2_CHANGED,
+        // instance.getProperty(KEY_2)));
         assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2));
         instance.close();
     }
 
     @Test
     public void testGetPropertiesForIntervalReload() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        SQLDatabasePropertyManager instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.INTERVAL,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -163,11 +171,11 @@ public class SQLDatabasePropertyManagerTest {
 
         try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
 
-            stmt.addBatch(String.format(TABLE_INSERT_QRY, TABLE_NAME, KEY_3, VALUE_3));
-            stmt.addBatch(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_1_CHANGED, TABLE_COL_KEY,
-                    KEY_1));
-            stmt.addBatch(String.format(TABLE_UPDATE_QRY, TABLE_NAME, TABLE_COL_VALUE, VALUE_2_CHANGED, TABLE_COL_KEY,
-                    KEY_2));
+            stmt.addBatch(String.format(TABLE_INSERT_QRY, tableName(), KEY_3, VALUE_3));
+            stmt.addBatch(
+                    String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_1_CHANGED, keyColName(), KEY_1));
+            stmt.addBatch(
+                    String.format(TABLE_UPDATE_QRY, tableName(), valueColName(), VALUE_2_CHANGED, keyColName(), KEY_2));
             stmt.executeBatch();
 
             expResult.clear();
@@ -183,8 +191,7 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testSetPropertyExisting() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
 
         instance.setProperty(KEY_2, VALUE_2_CHANGED);
         assertEquals(VALUE_2_CHANGED, instance.getProperty(KEY_2));
@@ -192,8 +199,7 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testSetPropertyNew() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
 
         instance.setProperty("prop3", "line3");
         assertEquals("line3", instance.getProperty("prop3"));
@@ -201,8 +207,7 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testSetProperties_refresh_true() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -223,8 +228,7 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testSetProperties_refresh_false() throws Exception {
-        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE,
-                ds);
+        SQLDatabasePropertyManager instance = new SQLDatabasePropertyManager(dbTableProps, ds);
 
         Map<String, String> expResult = new HashMap<String, String>();
         expResult.put(KEY_1, VALUE_1);
@@ -246,8 +250,8 @@ public class SQLDatabasePropertyManagerTest {
     @Test
     public void testSetProperty_External_Update() throws Exception {
 
-        Reloadable instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE, ds,
-                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        Reloadable instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.INTERVAL,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
 
         String newProp = "newProps1";
         instance.setProperty(newProp, "Line1");
@@ -259,8 +263,8 @@ public class SQLDatabasePropertyManagerTest {
     @Test
     public void testSetProperties_External_Update() throws Exception {
 
-        Reloadable instance = new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE, ds,
-                Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL);
+        Reloadable instance = createCustomInstance(Reloadable.RELOAD_STRATEGY.INTERVAL,
+                Reloadable.UPDATE_STRATEGY.EXTERNAL);
 
         String newProp = "newProps1";
         Map<String, String> newProps = new HashMap<String, String>();
@@ -275,47 +279,65 @@ public class SQLDatabasePropertyManagerTest {
 
     @Test
     public void testNullTableName() throws Exception {
-        assertThrows(PropertyException.class,
-                () -> new SQLDatabasePropertyManager(null, TABLE_COL_KEY, TABLE_COL_VALUE, ds));
+        Map<String, String> missingProps = new HashMap<>(dbTableProps);
+        missingProps.remove(SQLDatabasePropertyManager.TABLE_NAME);
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(missingProps, ds));
     }
 
     @Test
     public void testNullColumnKeyName() throws Exception {
-        assertThrows(PropertyException.class,
-                () -> new SQLDatabasePropertyManager(TABLE_NAME, null, TABLE_COL_VALUE, ds));
+        Map<String, String> missingProps = new HashMap<>(dbTableProps);
+        missingProps.remove(SQLDatabasePropertyManager.KEY_COL_NAME);
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(missingProps, ds));
     }
 
     @Test
     public void testNullColumnValueName() throws Exception {
+        Map<String, String> missingProps = new HashMap<>(dbTableProps);
+        missingProps.remove(SQLDatabasePropertyManager.VALUE_COL_NAME);
         assertThrows(PropertyException.class,
-                () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, null, ds));
+                () -> new SQLDatabasePropertyManager(missingProps, ds));
     }
 
     @Test
     public void testNullDataSource() throws Exception {
 
         assertThrows(PropertyException.class,
-                () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY, TABLE_COL_VALUE, null));
+                () -> new SQLDatabasePropertyManager(dbTableProps, null));
     }
 
     @Test
-    public void testInvalidReloadCronExpression() throws Exception {
-
-        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
-                TABLE_COL_VALUE, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, "gsgs"));
+    public void testInvalidReloadInterval() throws Exception {
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(dbTableProps, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, Reloadable.UPDATE_STRATEGY.EXTERNAL, 0, TimeUnit.SECONDS));
     }
 
     @Test
     public void testNullReloadStrategy() throws Exception {
 
-        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
-                TABLE_COL_VALUE, ds, null, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.DEFAULT_RELOAD_INTERVAL));
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(dbTableProps, ds, null, Reloadable.UPDATE_STRATEGY.EXTERNAL, TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS));
     }
 
     @Test
     public void testNullUpdateStrategy() throws Exception {
 
-        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(TABLE_NAME, TABLE_COL_KEY,
-                TABLE_COL_VALUE, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, null, TestUtils.DEFAULT_RELOAD_INTERVAL));
+        assertThrows(PropertyException.class, () -> new SQLDatabasePropertyManager(dbTableProps, ds, Reloadable.RELOAD_STRATEGY.INTERVAL, null, TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS));
+    }
+
+    private SQLDatabasePropertyManager createCustomInstance(Reloadable.RELOAD_STRATEGY reloadStrategy,
+            Reloadable.UPDATE_STRATEGY updateStrategy) throws PropertyException {
+        return new SQLDatabasePropertyManager(dbTableProps, ds, reloadStrategy, updateStrategy,
+                TestUtils.RELOAD_INTERVAL_SEC, TimeUnit.SECONDS);
+    }
+
+    private String tableName() {
+        return dbTableProps.get(SQLDatabasePropertyManager.TABLE_NAME);
+    }
+
+    private String keyColName() {
+        return dbTableProps.get(SQLDatabasePropertyManager.KEY_COL_NAME);
+    }
+
+    private String valueColName() {
+        return dbTableProps.get(SQLDatabasePropertyManager.VALUE_COL_NAME);
     }
 }

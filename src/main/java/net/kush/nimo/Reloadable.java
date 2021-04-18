@@ -1,6 +1,7 @@
 package net.kush.nimo;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Denotes a property source that detects changes and updates itself
@@ -10,7 +11,8 @@ import java.util.Map;
  */
 public interface Reloadable {
 
-    public static final String DEFAULT_RELOAD_INTERVAL ="*/1 * * * *";
+    public static final long DEFAULT_RELOAD_INTERVAL = 30;
+    public static final  TimeUnit DEFAULT_TIME_UNIT = TimeUnit.SECONDS;
 
     /**
      * A reload strategy to use for reloading the file containing the properties

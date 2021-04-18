@@ -1,18 +1,17 @@
 package net.kush.nimo;
 
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.naming.Context;
 import javax.naming.NamingException;
-
-import it.sauronsoftware.cron4j.InvalidPatternException;
-import it.sauronsoftware.cron4j.Scheduler;
 
 /**
  * A loader for JNDI based properties configuration
@@ -25,8 +24,8 @@ public class JNDILoader implements Reloadable {
     private Context context;
     private Map<String, String> propertiesMap = new HashMap<>();
 
-    private Scheduler scheduler;
-    private String scheduleId;
+    private ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> scheduleFuture;
     private ReadWriteLock lockMaker = new ReentrantReadWriteLock();
 
     /**
@@ -34,16 +33,16 @@ public class JNDILoader implements Reloadable {
      *
      * Data is reloaded from the specified naming context every minute.
      *
-     * @param context A fully configured naming context to be used to query
-     *                the naming sever where properties are stored under unique
-     *                "jndiName"
-     * @param jndiName A unique name identifying a property implementation
-     *                 object in a naming server.
-     * @throws PropertyException If context is null or jndiName is null or jndiName 
-     *         does not refer to an existing file
+     * @param context  A fully configured naming context to be used to query the
+     *                 naming sever where properties are stored under unique
+     *                 "jndiName"
+     * @param jndiName A unique name identifying a property implementation object in
+     *                 a naming server.
+     * @throws PropertyException If context is null or jndiName is null or jndiName
+     *                           does not refer to an existing file
      */
     public JNDILoader(Context context, String jndiName) throws PropertyException {
-        this(context, jndiName, DEFAULT_RELOAD_INTERVAL);
+        this(context, jndiName, DEFAULT_RELOAD_INTERVAL, DEFAULT_TIME_UNIT);
     }
 
     /**
@@ -51,26 +50,23 @@ public class JNDILoader implements Reloadable {
      *
      * Data is reloaded from the specified naming context at every interval.
      *
-     * @param context A fully configured naming context to be used to query
-     *                the naming sever where properties are stored under unique
-     *                "jndiName"
-     * @param jndiName A unique name identifying a property implementation
-     *                 object in a naming server.
-      * @param cronExpression  A valid cron expression that is used for reloading configuration if
-     *                        reload strategy is Reloadable.RELOAD_STRATEGY.INTERNAL.
-     * @throws PropertyException If context is null or jndiName is null
+     * @param context  A fully configured naming context to be used to query the
+     *                 naming sever where properties are stored under unique
+     *                 "jndiName"
+     * @param jndiName A unique name identifying a property implementation object in
+     *                 a naming server.
+     * @param interval A long that determines how often property should be reloaded.
+     *                 Value must be greater than zero Only applicable if
+     *                 Reloadable.RELOAD_STRATEGY.INTERNAL.
+     * @param timeUnit The time unit for the reload interval
+     * @throws PropertyException If context is null or jndiName is null or interval
+     *                           is not a positive whole number.
      */
-    public JNDILoader(Context context, String jndiName, String cronExpression) throws PropertyException {
+    public JNDILoader(Context context, String jndiName, long interval, TimeUnit timeUnit) throws PropertyException {
         this.jndiName = jndiName;
         this.context = context;
 
-        if (context == null) {
-            throw new PropertyException("Please provide a valid connection context objec to a JNDI compliant naming server");
-        }
-        
-        if (jndiName == null) {
-            throw new PropertyException("Please provide a valid JNDI name for identifying resource");
-        }
+        validateArgs(context, jndiName, interval);
 
         try {
             loadProperties();
@@ -80,17 +76,13 @@ public class JNDILoader implements Reloadable {
 
         scheduler = Util.getOrCreateScheduler();
         JNDILoader.ReadTask task = new JNDILoader.ReadTask();
-        try {
-            scheduleId = scheduler.schedule(cronExpression, task);
-        } catch (InvalidPatternException ipe) {
-            throw new PropertyException(ipe);
-        }
+        scheduleFuture = scheduler.scheduleWithFixedDelay(task, 1, interval, timeUnit);
 
     }
-    
+
     /**
      * 
-     * @see   Reloadable#getProperty(java.lang.String) 
+     * @see Reloadable#getProperty(java.lang.String)
      */
     @Override
     public String getProperty(String key) throws PropertyException {
@@ -107,7 +99,7 @@ public class JNDILoader implements Reloadable {
 
     /**
      * 
-     * @see   Reloadable#getProperties() 
+     * @see Reloadable#getProperties()
      */
     @Override
     public Map<String, String> getProperties() throws PropertyException {
@@ -119,7 +111,6 @@ public class JNDILoader implements Reloadable {
         } finally {
             lock.unlock();
         }
-
 
         return propertiesMapCopy;
     }
@@ -140,53 +131,62 @@ public class JNDILoader implements Reloadable {
         } catch (NamingException nme) {
             throw nme;
         } catch (IllegalArgumentException pe) {
-            throw new PropertyException(String.format("'%s must be bound to a java.util.Properties or java.util.Map instance'", jndiName));
+            throw new PropertyException(
+                    String.format("'%s must be bound to a java.util.Properties or java.util.Map instance'", jndiName));
         } finally {
             if (lock != null) {
                 lock.unlock();
             }
         }
 
-
     }
 
     private Map<String, String> convertBoundObjectToMap(Object object) {
-        
+
         if (object == null || !(object instanceof Map || object instanceof Properties)) {
             throw new IllegalArgumentException();
         }
-        
-        Map<String, String> temp = null;
+
+        Map<String, String> props = null;
         if (object instanceof Map) {
-            temp = (Map) object;
+            props = (Map<String, String>) object;
         } else if (object instanceof Properties) {
             Properties prop = (Properties) object;
-            
-            Iterator<String> itr = prop.stringPropertyNames().iterator();
-            temp = new HashMap<>();
-            
-            String key;
-            while (itr.hasNext()) {
-                key = itr.next();
-                temp.put(key, prop.getProperty(key));
-            }
-            
+            Map<String, String> temp = new HashMap<>();
+            prop.entrySet().forEach(kv -> temp.put(kv.getKey().toString(), kv.getValue().toString()));
+            props = temp;
         }
 
-        return temp;
+        return props;
     }
 
     public void setProperty(String key, String value) throws PropertyException {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        throw new UnsupportedOperationException("Not supported yet."); // To change body of generated methods, choose
+                                                                       // Tools | Templates.
     }
 
     public void setProperties(Map<String, String> properties, boolean refresh) throws PropertyException {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        throw new UnsupportedOperationException("Not supported yet."); // To change body of generated methods, choose
+                                                                       // Tools | Templates.
     }
 
     @Override
     public void close() {
-        Util.deschedule(scheduleId);
+        Util.deschedule(scheduleFuture);
+    }
+
+    private void validateArgs(Context context, String jndiName, long interval) throws PropertyException {
+
+        if (context == null) {
+            throw new PropertyException(
+                    "Please provide a valid connection context objec to a JNDI compliant naming server");
+        }
+
+        if (jndiName == null) {
+            throw new PropertyException("Please provide a valid JNDI name for identifying resource");
+        }
+        Util.validateArgs(interval);
+
     }
 
     class ReadTask implements Runnable {

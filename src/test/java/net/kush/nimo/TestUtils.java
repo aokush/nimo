@@ -6,7 +6,7 @@ import org.awaitility.core.ConditionFactory;
 
 public class TestUtils {
 
-    public static final String DEFAULT_RELOAD_INTERVAL ="*/1 * * * *";
+    public static long RELOAD_INTERVAL_SEC = 5;
 
     public static ConditionFactory maxWaitFor(int seconds) {
         return await().atMost(seconds, TimeUnit.SECONDS);
